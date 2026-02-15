@@ -4,51 +4,74 @@
 
 ### 1.1 High-Level Architecture
 
-Svastha-Recommend follows an "Edge-Vault Shield" architecture with three primary layers:
+Svastha-Recommend follows an "Edge-Vault Shield" architecture leveraging AWS cloud services for scalability while maintaining complete privacy through edge processing:
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                        User Device (Edge)                    │
+│                   Mobile Device: Edge Layer                  │
 │  ┌────────────────────────────────────────────────────────┐ │
-│  │  1. Medical Entity Extraction Layer (SLM)              │ │
-│  │     - GLiNER / MedSpaCy models                         │ │
-│  │     - Prescription OCR                                 │ │
+│  │  1. Prescription Capture                               │ │
+│  │     - Camera/File Upload/ABDM Integration              │ │
 │  └────────────────────────────────────────────────────────┘ │
 │  ┌────────────────────────────────────────────────────────┐ │
-│  │  2. PII Masking & Anonymization Layer                  │ │
-│  │     - Redaction, Generalization, LDP                   │ │
+│  │  2. On-Device OCR & Entity Extraction                  │ │
+│  │     - Tesseract OCR                                    │ │
+│  │     - GLiNER / MedSpaCy (ONNX Runtime)                 │ │
 │  └────────────────────────────────────────────────────────┘ │
 │  ┌────────────────────────────────────────────────────────┐ │
-│  │  3. Health Persona Mapping Layer                       │ │
-│  │     - Public Taxonomy Bucketing                        │ │
+│  │  3. PII Masking Engine                                 │ │
+│  │     - Mask Name/Age/Address                            │ │
+│  │     - Generalization & LDP                             │ │
+│  └────────────────────────────────────────────────────────┘ │
+│  ┌────────────────────────────────────────────────────────┐ │
+│  │  4. Anonymized Health Persona                          │ │
+│  │     - Generate Persona ID & Vector                     │ │
+│  │     - Encrypted Local Storage                          │ │
+│  └────────────────────────────────────────────────────────┘ │
+│  ┌────────────────────────────────────────────────────────┐ │
+│  │  5. Permanent Image Deletion                           │ │
+│  │     - Original prescription deleted                    │ │
 │  └────────────────────────────────────────────────────────┘ │
 └─────────────────────────────────────────────────────────────┘
-                            ↓ (Masked Persona Only)
+                    ↓ TLS 1.3 (Encrypted Persona ID Only)
 ┌─────────────────────────────────────────────────────────────┐
-│                    Cloud Services Layer                      │
+│                  Cloud Intelligence: AWS                     │
 │  ┌────────────────────────────────────────────────────────┐ │
-│  │  Recommendation Engine                                  │ │
-│  │  - ICMR-NIN / EFSA Guidelines Database                 │ │
-│  │  - Product Catalog with Health Tags                    │ │
-│  │  - Persona-to-Product Matching                         │ │
+│  │  Entry Point: Amazon API Gateway                       │ │
+│  └────────────────────────────────────────────────────────┘ │
+│                            ↓                                 │
+│  ┌────────────────────────────────────────────────────────┐ │
+│  │  Compute: AWS Lambda (Serverless)                      │ │
+│  └────────────────────────────────────────────────────────┘ │
+│                            ↓                                 │
+│  ┌────────────────────────────────────────────────────────┐ │
+│  │  Unified Data Tier: Amazon Aurora PostgreSQL           │ │
+│  │  - SQL: ICMR-NIN Guidelines                            │ │
+│  │  - JSONB: ONDC Product Metadata                        │ │
+│  │  - pgvector: Persona Matching (Semantic Search)        │ │
 │  └────────────────────────────────────────────────────────┘ │
 │  ┌────────────────────────────────────────────────────────┐ │
-│  │  ONDC Integration Layer                                 │ │
-│  │  - Buyer App API Integration                           │ │
-│  │  - Search Interception                                 │ │
-│  │  - Nudge Delivery                                      │ │
+│  │  Cache: Amazon ElastiCache (Redis)                     │ │
+│  │  - Real-time Nudge Cache                               │ │
 │  └────────────────────────────────────────────────────────┘ │
 │  ┌────────────────────────────────────────────────────────┐ │
-│  │  Vendor Intelligence Layer                              │ │
-│  │  - Anonymized Demand Aggregation                       │ │
-│  │  - Pincode-level Forecasting                           │ │
+│  │  AI & Logic: Amazon Bedrock (GenAI)                    │ │
+│  │  - Personalized Nudge Generation                       │ │
 │  └────────────────────────────────────────────────────────┘ │
+└─────────────────────────────────────────────────────────────┘
+                            ↓
+┌─────────────────────────────────────────────────────────────┐
+│                    Value Delivery Layer                      │
+│  - Hyper-Personalized Shopping Nudges                       │
+│  - ONDC Integration                                         │
+│  - Vendor Intelligence Dashboard                            │
 └─────────────────────────────────────────────────────────────┘
                             ↓
 ┌─────────────────────────────────────────────────────────────┐
 │                  External Integrations                       │
 │  - ABDM/ABHA (Health Records)                               │
-│  - ONDC Buyer Apps                                          │
+│  - ONDC Platform (E-commerce)                               │
+│  - ICMR-NIN / EFSA (Guidelines)                             │
 │  - Insurance Providers (Optional)                           │
 └─────────────────────────────────────────────────────────────┘
 ```
@@ -56,21 +79,39 @@ Svastha-Recommend follows an "Edge-Vault Shield" architecture with three primary
 ### 1.2 Component Breakdown
 
 #### 1.2.1 Edge Medical Entity Extraction
-- **Technology**: Small Language Models (GLiNER, MedSpaCy)
+- **Technology**: Small Language Models (GLiNER, MedSpaCy) via ONNX Runtime
 - **Deployment**: On-device (mobile CPU optimized)
 - **Input**: Prescription images, PDF documents, ABDM health records
 - **Output**: Structured health entities (conditions, medications, lab values)
 - **Processing Time**: <3 seconds on mid-range devices
+- **OCR**: Tesseract OCR for text extraction from images
 
-#### 1.2.2 PII Masking Layer
-- **Redaction**: Remove names, exact addresses, hospital IDs
-- **Generalization**: 
-  - Ages → 5-year bins (e.g., 35 → "30-35")
-  - Locations → 3-digit Pincodes (e.g., 560001 → "560")
-- **Local Differential Privacy (LDP)**: Add controlled noise to health parameters
-- **k-Anonymity**: Ensure at least k users share the same masked profile
+#### 1.2.2 PII Masking Engine
+Multi-stage anonymization process:
 
-#### 1.2.3 Health Persona Taxonomy
+**Stage 1: Redaction**
+- Remove: Names, hospital IDs, exact addresses, phone numbers
+
+**Stage 2: Generalization**
+- Ages → 5-year bins (e.g., 35 → "30-35")
+- Locations → 3-digit Pincodes (e.g., 560001 → "560")
+
+**Stage 3: Local Differential Privacy (LDP)**
+- Add controlled Laplace noise (ε = 1.0)
+- Maintains utility while ensuring privacy
+
+**Stage 4: k-Anonymity Validation**
+- Ensure profile matches ≥5 other users
+- Apply additional generalization if needed
+
+#### 1.2.3 Anonymized Health Persona Generation
+- **Persona ID Format**: `{category}-{subcategory}-{year}-{hash}`
+  - Example: `LS-HF-MC-2024-A3F9`
+- **Vector Generation**: Create embedding vector for semantic matching
+- **Encrypted Storage**: AES-256 encryption with device-specific keys
+- **Permanent Deletion**: Original prescription images deleted immediately
+
+#### 1.2.4 Health Persona Taxonomy
 Public, transparent N-ary tree structure:
 
 ```
